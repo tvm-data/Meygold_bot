@@ -1,43 +1,34 @@
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
-import requests
+from telegram.ext import Updater, CommandHandler
 
+# ۱. گرفتن توکن ربات از متغیر محیطی
 TOKEN = os.getenv("BOT_TOKEN")
 
-gold_api_url = "https://api.tgju.org/v1/json"
+# اگر توکن موجود نبود، ارور بده
+if not TOKEN:
+    raise ValueError("توکن ربات پیدا نشد! لطفا BOT_TOKEN رو تنظیم کن.")
 
+# ۲. تابعی که موقع ارسال دستور /start اجرا میشه
 def start(update, context):
-    update.message.reply_text("سلام! من ربات محاسبه قیمت لحظه‌ای طلا هستم.")
+    update.message.reply_text("سلام! ربات آماده است.")
 
-def calculate_price(update, context):
-    # نمونه ساده: فقط عدد ثابت وزن
-    weight = 2.5  # گرم
-    wage_percent = 11
-    profit_percent = 7
-    tax_percent = 0
-
-    res = requests.get(gold_api_url).json()
-    gold_price = int(res["gold"]["price"])
-    
-    base = gold_price * weight
-    wage = base * wage_percent / 100
-    profit = (base + wage) * profit_percent / 100
-    tax = (base + wage + profit) * tax_percent / 100
-    final = base + wage + profit + tax
-
-    msg = f"💎 قیمت نهایی:\nوزن: {weight} گرم\nقیمت طلا: {gold_price:,} تومان\n\n💰 قیمت نهایی: {final:,.0f} تومان"
-    update.message.reply_text(msg)
-
+# ۳. تابع اصلی که ربات رو راه‌اندازی می‌کنه
 def main():
-    updater = Updater(TOKEN)
+    # ساختن Updater با توکن (اینجا ربات شروع به کار می‌کنه)
+    updater = Updater(token=TOKEN, use_context=True)
+
+    # گرفتن دیسپچر برای مدیریت فرمان‌ها
     dp = updater.dispatcher
+
+    # ثبت فرمان /start
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("price", calculate_price))
+
+    # شروع گرفتن پیام‌ها از تلگرام (ربات آنلاین می‌شه)
     updater.start_polling()
+
+    # برنامه تا وقتی متوقف نشه، در حال اجرا می‌مونه
     updater.idle()
 
+# ۴. اگر این فایل مستقیم اجرا بشه، تابع main رو اجرا کن
 if __name__ == "__main__":
     main()
-if not TOKEN:
-    raise ValueError("توکن ربات پیدا نشد! لطفاً متغیر محیطی BOT_TOKEN را تنظیم کن.")
