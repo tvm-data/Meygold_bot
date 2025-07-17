@@ -39,3 +39,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+if not TOKEN:
+    raise ValueError("توکن ربات پیدا نشد! لطفاً متغیر محیطی BOT_TOKEN را تنظیم کن.")
