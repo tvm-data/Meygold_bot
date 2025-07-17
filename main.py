@@ -1,47 +1,46 @@
 import os
 import requests
+from bs4 import BeautifulSoup
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
-# 🟢 توکن ربات تلگرام از محیط Railway یا فایل env
+# ✅ گرفتن توکن از متغیر محیطی Railway
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("توکن ربات پیدا نشد! لطفا BOT_TOKEN رو تنظیم کن.")
+    raise ValueError("❌ توکن BOT پیدا نشد. لطفاً در Railway تنظیم کن.")
 
-# 🟡 مشخصات طلا (مقدار قابل تغییر برای هر محصول)
-weight = 2.5  # وزن طلای این پست به گرم
-wage_percent = 11  # درصد اجرت
-profit_percent = 7  # درصد سود
-tax_percent = 0     # درصد مالیات (در صورت نیاز)
+# ⚙️ اطلاعات طلا (قابل تغییر برای هر پست)
+weight = 2.5             # وزن طلا (به گرم)
+wage_percent = 11        # درصد اجرت
+profit_percent = 7       # درصد سود
+tax_percent = 0          # درصد مالیات
 
-# 🔵 آدرس API برای گرفتن قیمت گرم ۱۸ از Nerkh-API
-API_URL = "http://nerkh-api.ir/api//gold/"
-
-# 🟠 وقتی کاربر /start رو می‌فرسته
+# ⬅️ شروع ربات
 def start(update: Update, context: CallbackContext):
-    update.message.reply_text("سلام! من ربات محاسبه قیمت لحظه‌ای طلا هستم.\nبرای محاسبه قیمت، دستور /price رو بفرست.")
+    update.message.reply_text("سلام! 👋 برای محاسبه قیمت، دستور /price رو بفرست.")
 
-# 🟠 وقتی کاربر /price رو می‌فرسته
+# ⬅️ دستور /price → دکمه برای محاسبه
 def price(update: Update, context: CallbackContext):
     keyboard = [[InlineKeyboardButton("📲 محاسبه قیمت لحظه‌ای", callback_data="calculate")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text("برای دیدن قیمت نهایی، دکمه زیر را فشار بده:", reply_markup=reply_markup)
+    update.message.reply_text("برای مشاهده قیمت نهایی، دکمه زیر را بزن:", reply_markup=reply_markup)
 
-# 🟠 وقتی کاربر روی دکمه کلیک می‌کنه
+# ⬅️ وقتی کاربر روی دکمه کلیک می‌کنه
 def button(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
-    if query.data != "calculate":
-        return
-
     try:
-        res = requests.get(API_URL, timeout=10).json()
-        gold_price = float(res["data"]["prices"]["geram18"]["current"])
+        # دریافت قیمت از سایت مثقال
+        html = requests.get("https://www.mesghal.com/").text
+        soup = BeautifulSoup(html, "html.parser")
+        price_element = soup.find("td", string="طلای 18 عیار").find_next("td")
+        gold_price = int(price_element.text.replace(",", "").strip())
     except Exception as e:
-        query.edit_message_text(f"❌ خطا در دریافت قیمت طلا: {e}")
+        query.edit_message_text(f"❌ خطا در دریافت قیمت:\n{e}")
         return
 
+    # محاسبه قیمت نهایی
     base = gold_price * weight
     wage = base * wage_percent / 100
     profit = (base + wage) * profit_percent / 100
@@ -49,14 +48,14 @@ def button(update: Update, context: CallbackContext):
     final = base + wage + profit + tax
 
     msg = (
-        f"🔖 وزن: {weight} گرم\n"
-        f"💰 قیمت هر گرم طلا ۱۸ عیار: {gold_price:,.0f} تومان\n"
+        f"📌 وزن طلا: {weight} گرم\n"
+        f"💰 قیمت هر گرم: {gold_price:,} تومان\n"
         f"🧾 اجرت: {wage_percent}% | سود: {profit_percent}% | مالیات: {tax_percent}%\n\n"
         f"✅ قیمت نهایی: {final:,.0f} تومان"
     )
     query.edit_message_text(msg)
 
-# 🟣 شروع ربات
+# ⬅️ اجرای ربات
 def main():
     updater = Updater(token=TOKEN, use_context=True)
     dp = updater.dispatcher
