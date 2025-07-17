@@ -1,101 +1,90 @@
 import os
 import re
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+    ContextTypes,
+)
 import requests
 from bs4 import BeautifulSoup
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-TOKEN = os.getenv("BOT_TOKEN") or "توکن رباتت اینجا بذار"
+TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_USERNAME = "@meygoldchannel"  # ← آیدی کانالت (با @)
 
-# --- تابع استخراج قیمت لحظه‌ای طلا از سایت مثقال
-def get_gold_price():
-    url = "https://www.mesghal.ir"
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    res = requests.get(url, headers=headers)
-    soup = BeautifulSoup(res.text, "html.parser")
-
+async def extract_price():
     try:
-        gold_element = soup.find("span", string=re.compile("طلا 18 عیار"))
-        price_tag = gold_element.find_next("span")
-        price_text = price_tag.text.strip().replace(",", "")
-        return int(price_text)
+        response = requests.get("https://www.tgju.org/profile/geram18")
+        soup = BeautifulSoup(response.text, "html.parser")
+        price_div = soup.find("td", {"class": "nf", "data-col-seq": "2"})
+        if price_div:
+            return int(price_div.text.replace(",", ""))
     except Exception as e:
         print("❌ خطا در دریافت قیمت:", e)
-        return None
+    return None
 
-# --- استخراج داده از کپشن
-def extract_values(text):
+def parse_caption(text):
     try:
-        weight = float(re.search(r"وزن[:\- ]?([۰-۹0-9/.]+)", text).group(1).replace("٫", ".").replace("،", "."))
-        wage = float(re.search(r"اجرت[:\- ]?([۰-۹0-9/.]+)", text).group(1).replace("٫", "."))
-        profit = float(re.search(r"سود[:\- ]?([۰-۹0-9/.]+)", text).group(1).replace("٫", "."))
-        tax = float(re.search(r"مالیات[:\- ]?([۰-۹0-9/.]+)", text).group(1).replace("٫", "."))
+        weight = float(re.search(r"وزن[:\-–\s]*([\d./]+)", text).group(1).replace("/", "."))
+        wage = float(re.search(r"اجرت[:\-–\s]*([\d.]+)", text).group(1))
+        profit = float(re.search(r"سود[:\-–\s]*([\d.]+)", text).group(1))
+        tax = float(re.search(r"مالیات[:\-–\s]*([\d.]+)", text).group(1))
         return weight, wage, profit, tax
     except Exception as e:
-        print("❌ خطا در استخراج داده:", e)
+        print("❌ خطا در خواندن متن:", e)
         return None
 
-# --- وقتی کاربر دکمه قیمت رو فشار بده
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_new_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.channel_post and update.channel_post.caption:
+        data = parse_caption(update.channel_post.caption)
+        if data:
+            button = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📌 محاسبه قیمت", callback_data=f"calc:{update.channel_post.message_id}")]
+            ])
+            await context.bot.edit_message_reply_markup(
+                chat_id=update.channel_post.chat_id,
+                message_id=update.channel_post.message_id,
+                reply_markup=button
+            )
+
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if not query.message.caption:
-        await query.edit_message_text("❌ خطا: توضیحات (caption) یافت نشد.")
+    message = query.message
+    data = parse_caption(message.caption or "")
+    if not data:
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text("❌ خطا در خواندن اطلاعات.")
         return
 
-    values = extract_values(query.message.caption)
-    if not values:
-        await query.edit_message_text("❌ خطا در استخراج وزن یا اجرت یا سود یا مالیات.")
-        return
-
-    weight, wage, profit, tax = values
-    gold_price = get_gold_price()
-
+    weight, wage, profit, tax = data
+    gold_price = await extract_price()
     if not gold_price:
-        await query.edit_message_text("❌ خطا در دریافت قیمت لحظه‌ای طلا.")
+        await query.message.reply_text("❌ خطا در دریافت قیمت لحظه‌ای.")
         return
 
     base = gold_price * weight
-    wage_amt = base * wage / 100
-    profit_amt = (base + wage_amt) * profit / 100
-    tax_amt = (base + wage_amt + profit_amt) * tax / 100
-    total = base + wage_amt + profit_amt + tax_amt
+    wage_amount = base * wage / 100
+    profit_amount = (base + wage_amount) * profit / 100
+    tax_amount = (base + wage_amount + profit_amount) * tax / 100
+    total = base + wage_amount + profit_amount + tax_amount
 
-    msg = f"""💎 قیمت نهایی:
-وزن: {weight} گرم
-قیمت طلا: {gold_price:,} تومان
+    msg = (
+        f"🔹 وزن: {weight} گرم\n"
+        f"🔸 قیمت لحظه‌ای: {gold_price:,.0f} تومان\n\n"
+        f"💰 قیمت نهایی: {total:,.0f} تومان"
+    )
+    await query.message.reply_text(msg)
 
-اجرت: {wage}٪
-سود: {profit}٪
-مالیات: {tax}٪
-
-💰 قیمت نهایی: {int(total):,} تومان"""
-    await query.edit_message_text(msg)
-
-# --- وقتی کاربر پست بفرسته
-async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.caption:
-        keyboard = [[InlineKeyboardButton("📌 محاسبه قیمت", callback_data="calc")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("برای مشاهده قیمت نهایی، دکمه زیر را بزنید 👇", reply_markup=reply_markup)
-
-# --- استارت ربات
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام! ربات آماده است. پست‌هایی که شامل وزن، اجرت، سود و مالیات باشن رو همراه دکمه قیمت‌گذاری می‌کنم.")
-
-# --- اجرای ربات
-def main():
-    app = Application.builder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_callback))
-    app.add_handler(MessageHandler(filters.PHOTO & filters.Caption(True), handle_post))
-
-    print("🤖 ربات فعال شد...")
-    app.run_polling()
+async def start_bot():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.ALL, handle_new_post))
+    app.add_handler(CallbackQueryHandler(handle_button))
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(start_bot())
