@@ -1,107 +1,81 @@
 import os
-import re
 import requests
-from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, ContextTypes,
-    MessageHandler, CallbackQueryHandler,
-    filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_USERNAME = "@meygold_gallery"  # ← آیدی کانال خودت اینجا بذار
+API_URL = "https://www.tgju.org"
 
-# تابع گرفتن قیمت طلا از مثقال
-def get_gold_price():
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("سلام! ربات قیمت‌گذاری طلا فعاله. لطفاً یک پست با وزن، اجرت، سود و مالیات بفرست.")
+
+def extract_price_info(text):
+    import re
     try:
-        response = requests.get("https://mesghal.ir/")
-        soup = BeautifulSoup(response.text, "html.parser")
-        table = soup.find("table", class_="table-price")
-        rows = table.find_all("tr")
-        for row in rows:
-            if "طلا 18 عیار" in row.text:
-                price_text = row.find_all("td")[1].text.strip().replace(",", "")
-                return int(price_text)
-    except Exception as e:
-        print("❌ خطا در دریافت قیمت:", e)
-        return None
-
-# استخراج اعداد از کپشن پست
-def extract_data_from_caption(caption):
-    try:
-        weight = float(re.search(r"وزن[:\-]?\s*([\d.]+)", caption).group(1))
-        wage = float(re.search(r"اجرت[:\-]?\s*([\d.]+)", caption).group(1))
-        profit = float(re.search(r"سود[:\-]?\s*([\d.]+)", caption).group(1))
-        tax = float(re.search(r"مالیات[:\-]?\s*([\d.]+)", caption).group(1))
+        weight = float(re.search(r'وزن[:\s]+([\d/.]+)', text).group(1).replace(',', '.'))
+        wage = float(re.search(r'اجرت[:\s]+([\d/.]+)', text).group(1).replace(',', '.'))
+        profit = float(re.search(r'سود[:\s]+([\d/.]+)', text).group(1).replace(',', '.'))
+        tax = float(re.search(r'مالیات[:\s]+([\d/.]+)', text).group(1).replace(',', '.'))
         return weight, wage, profit, tax
     except:
         return None
 
-# محاسبه قیمت نهایی
-def calculate_price(gold_price, weight, wage, profit, tax):
-    base = gold_price * weight
-    wage_amount = base * wage / 100
-    profit_amount = (base + wage_amount) * profit / 100
-    tax_amount = (base + wage_amount + profit_amount) * tax / 100
-    final_price = base + wage_amount + profit_amount + tax_amount
-    return round(final_price)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    data = extract_price_info(text)
+    if data:
+        keyboard = [[InlineKeyboardButton("📌 محاسبه قیمت", callback_data=text)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("برای محاسبه قیمت روی دکمه زیر بزنید:", reply_markup=reply_markup)
 
-# هندل کردن پست جدید در کانال
-async def handle_new_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.channel_post and update.channel_post.chat.username == CHANNEL_USERNAME[1:]:
-        caption = update.channel_post.caption
-        if not caption:
-            return
-        data = extract_data_from_caption(caption)
-        if not data:
-            return
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💰 محاسبه قیمت", callback_data=f"calc_{update.channel_post.message_id}")]
-        ])
-        await context.bot.edit_message_reply_markup(
-            chat_id=update.channel_post.chat.id,
-            message_id=update.channel_post.message_id,
-            reply_markup=keyboard
-        )
-
-# وقتی دکمه «محاسبه قیمت» زده میشه
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
-    msg = await context.bot.get_chat(CHANNEL_USERNAME).get_message(int(query.data.split("_")[1]))
-    caption = msg.caption
-    data = extract_data_from_caption(caption)
+    text = query.data
+    data = extract_price_info(text)
     if not data:
-        await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text("❌ خطا در استخراج اطلاعات از کپشن!")
+        await query.edit_message_text("❌ خطا در دریافت اطلاعات از متن.")
         return
 
-    weight, wage, profit, tax = data
-    gold_price = get_gold_price()
-    if not gold_price:
-        await query.message.reply_text("❌ خطا در دریافت قیمت طلا.")
+    weight, wage_percent, profit_percent, tax_percent = data
+
+    try:
+        html = requests.get(API_URL).text
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        gold_tag = soup.find("td", string="طلای 18 عیار").find_next("td")
+        gold_price = int(gold_tag.text.replace(',', ''))
+    except:
+        await query.edit_message_text("❌ خطا در دریافت قیمت طلا از سایت.")
         return
 
-    final = calculate_price(gold_price, weight, wage, profit, tax)
+    base = gold_price * weight
+    wage = base * wage_percent / 100
+    profit = (base + wage) * profit_percent / 100
+    tax = (base + wage + profit) * tax_percent / 100
+    final = base + wage + profit + tax
 
-    text = (
-        f"📊 **محاسبه قیمت نهایی:**\n"
-        f"وزن: {weight} گرم\n"
-        f"اجرت: {wage}%\n"
-        f"سود: {profit}%\n"
-        f"مالیات: {tax}%\n"
-        f"قیمت لحظه‌ای طلا: {gold_price:,} تومان\n\n"
-        f"💰 **قیمت نهایی:** {final:,.0f} تومان"
-    )
+    msg = f"""
+💎 قیمت لحظه‌ای طلای ۱۸ عیار: {gold_price:,} تومان
 
-    await query.message.reply_text(text, parse_mode="Markdown")
+📦 جزئیات:
+وزن: {weight} گرم
+اجرت: {wage_percent}٪
+سود: {profit_percent}٪
+مالیات: {tax_percent}٪
 
-# شروع ربات
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.Chat(username=CHANNEL_USERNAME) & filters.UpdateType.CHANNEL_POST, handle_new_post))
-    app.add_handler(CallbackQueryHandler(button_handler))
+💰 قیمت نهایی: {final:,.0f} تومان
+"""
+    await query.edit_message_text(msg)
+
+def main():
+    token = os.getenv("BOT_TOKEN")
+    app = ApplicationBuilder().token(token).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(handle_button))
+
     app.run_polling()
+
+if __name__ == "__main__":
+    main()
